@@ -2,8 +2,23 @@ import discord
 from discord.ext import commands
 import os
 from dotenv import load_dotenv
+from flask import Flask
+from threading import Thread
 
 load_dotenv()  # loads .env file
+
+# ── Keep-alive server (required for Render Web Service) ──────────────────────
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_server():
+    app.run(host='0.0.0.0', port=8080)
+
+Thread(target=run_server, daemon=True).start()
+# ─────────────────────────────────────────────────────────────────────────────
 
 intents = discord.Intents.default()
 intents.message_content = True
