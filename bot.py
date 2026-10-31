@@ -18,16 +18,29 @@ def run_server():
     app.run(host='0.0.0.0', port=8080)
 
 Thread(target=run_server, daemon=True).start()
-# ─────────────────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────────────────────────────────
 
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
+
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:  # ignore the bot's own messages
+        return
+
+    content = message.content.lower().strip()
+
+    # Only reply to plain messages, NOT to bot commands like !hello
+    if not message.content.startswith("!") and content in ["hi", "hello", "hey"]:
+        await message.reply(f"Hey {message.author.mention}! 👋 How's it going?")
+
+    await bot.process_commands(message)  # still allow !commands to work
 
 @bot.command()
 async def ping(ctx):
@@ -36,5 +49,33 @@ async def ping(ctx):
 @bot.command()
 async def hello(ctx):
     await ctx.send(f"Hello, {ctx.author.mention}! 👋")
+
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(
+        title="🤖 Astragon Commands",
+        description="Here is the list of available commands:",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="`!ping`",
+        value="Checks the bot's response time and API latency.",
+        inline=False
+    )
+    embed.add_field(
+        name="`!hello`",
+        value="Sends a friendly greeting",
+        inline=False
+    )
+    embed.add_field(
+        name="`!help`",
+        value="Displays this interacive help message.",
+        inline=False
+    )
+
+    embed.set_footer(text=f"Requested by {ctx.author.display_name}")
+
+    await ctx.send(embed=embed)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
