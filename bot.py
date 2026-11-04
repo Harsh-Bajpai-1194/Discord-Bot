@@ -61,7 +61,11 @@ async def on_member_join(member):
         embed.add_field(name="Member Count", value=f"#{member.guild.member_count}", inline=True)
         embed.set_footer(text=f"User ID: {member.id}")
 
-        await channel.send(embed=embed)
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            if member.guild.system_channel and channel != member.guild.system_channel:
+                await member.guild.system_channel.send(embed=embed)
         
 @bot.command()
 async def ping(ctx):
