@@ -22,9 +22,21 @@ Thread(target=run_server, daemon=True).start()
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True # For member join/leave events
+intents.members = True  # For member join/leave events
 
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+class AstragonBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
+
+    async def setup_hook(self):
+        """Sync slash commands with Discord upon bot startup."""
+        try:
+            synced = await self.tree.sync()
+            print(f"✅ Synced {len(synced)} slash command(s)")
+        except Exception as e:
+            print(f"❌ Failed to sync slash commands: {e}")
+
+bot = AstragonBot()
 
 @bot.event
 async def on_ready():
@@ -66,36 +78,37 @@ async def on_member_join(member):
         except discord.Forbidden:
             if member.guild.system_channel and channel != member.guild.system_channel:
                 await member.guild.system_channel.send(embed=embed)
-        
-@bot.command()
-async def ping(ctx):
+
+# ── Slash & Prefix Commands ────────────────────────────────────────────────
+@bot.hybrid_command(name="ping", description="Checks the bot's response time and API latency.")
+async def ping(ctx: commands.Context):
     await ctx.send(f"🏓 Pong! Latency: {round(bot.latency * 1000)}ms")
 
-@bot.command()
-async def hello(ctx):
+@bot.hybrid_command(name="hello", description="Sends a friendly greeting.")
+async def hello(ctx: commands.Context):
     await ctx.send(f"Hello, {ctx.author.mention}! 👋")
 
-@bot.command()
-async def help(ctx):
+@bot.hybrid_command(name="help", description="Displays interactive command list.")
+async def help(ctx: commands.Context):
     embed = discord.Embed(
         title="🤖 Astragon Commands",
-        description="Here is the list of available commands:",
+        description="Here is the list of available commands (usable via `/` or `!`):",
         color=discord.Color.blue()
     )
 
     embed.add_field(
-        name="`!ping`",
+        name="`/ping` (or `!ping`)",
         value="Checks the bot's response time and API latency.",
         inline=False
     )
     embed.add_field(
-        name="`!hello`",
-        value="Sends a friendly greeting",
+        name="`/hello` (or `!hello`)",
+        value="Sends a friendly greeting.",
         inline=False
     )
     embed.add_field(
-        name="`!help`",
-        value="Displays this interacive help message.",
+        name="`/help` (or `!help`)",
+        value="Displays this interactive help message.",
         inline=False
     )
 
@@ -103,4 +116,12 @@ async def help(ctx):
 
     await ctx.send(embed=embed)
 
-bot.run(os.getenv("DISCORD_TOKEN"))
+# Owner-only command for instant manual re-syncing if needed
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync(ctx: commands.Context):
+    synced = await bot.tree.sync()
+    await ctx.send(f"✅ Synced {len(synced)} command(s) to Discord.")
+
+if __name__ == "__main__":
+    bot.run(os.getenv("DISCORD_TOKEN"))
