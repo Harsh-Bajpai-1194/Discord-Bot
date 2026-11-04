@@ -22,6 +22,7 @@ Thread(target=run_server, daemon=True).start()
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True # For member join/leave events
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
@@ -42,6 +43,26 @@ async def on_message(message):
 
     await bot.process_commands(message)  # still allow !commands to work
 
+@bot.event
+async def on_member_join(member):
+    channel = discord.utils.get(member.guild.text_channels, name="welcome")
+    if channel is None:
+        channel = member.guild.system_channel
+
+    if channel:
+        embed = discord.Embed(
+            title="🎉 Welcome to the Server!",
+            description=f"Hey {member.mention}, welcome to **{member.guild.name}**! We are glad to have you here.",
+            color=discord.Color.green()
+        )
+        if member.avatar:
+            embed.set_thumbnail(url=member.avatar.url)
+
+        embed.add_field(name="Member Count", value=f"#{member.guild.member_count}", inline=True)
+        embed.set_footer(text=f"User ID: {member.id}")
+
+        await channel.send(embed=embed)
+        
 @bot.command()
 async def ping(ctx):
     await ctx.send(f"🏓 Pong! Latency: {round(bot.latency * 1000)}ms")
