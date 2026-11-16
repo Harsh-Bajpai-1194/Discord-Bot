@@ -111,10 +111,122 @@ async def help(ctx: commands.Context):
         value="Displays this interactive help message.",
         inline=False
     )
+    embed.add_field(
+        name="`/kick` (or `!kick`)",
+        value="Kicks a member from the server (Requires Kick Members permission).",
+        inline=False
+    )
+    embed.add_field(
+        name="`/ban` (or `!ban`)",
+        value="Bans a member from the server (Requires Ban Members permission).",
+        inline=False
+    )
 
     embed.set_footer(text=f"Requested by {ctx.author.display_name}")
 
     await ctx.send(embed=embed)
+
+# ── Moderation Commands ───────────────────────────────────────────────────
+
+@bot.hybrid_command(name="kick", description="Kicks a member from the server.")
+@commands.guild_only()
+@commands.has_permissions(kick_members=True)
+@commands.bot_has_permissions(kick_members=True)
+async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    if member == ctx.author:
+        await ctx.send("❌ You cannot kick yourself.")
+        return
+
+    if member == ctx.guild.me:
+        await ctx.send("❌ I cannot kick myself.")
+        return
+
+    if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        await ctx.send("❌ You cannot kick a member with an equal or higher role than yours.")
+        return
+
+    if member.top_role >= ctx.guild.me.top_role:
+        await ctx.send("❌ I cannot kick this member because their role is equal to or higher than my highest role.")
+        return
+
+    await member.kick(reason=reason)
+
+    embed = discord.Embed(
+        title="👢 Member Kicked",
+        description=f"**{member.mention}** has been kicked from the server.",
+        color=discord.Color.orange()
+    )
+    embed.add_field(name="Reason", value=reason, inline=False)
+    embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+    embed.set_footer(text=f"User ID: {member.id}")
+
+    await ctx.send(embed=embed)
+
+@kick.error
+async def kick_error(ctx: commands.Context, error: commands.CommandError):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("🚫 You do not have permission to kick members.")
+    elif isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("❌ I do not have permission to kick members.")
+    elif isinstance(error, commands.MemberNotFound):
+        await ctx.send("⚠️ Member not found. Please mention a valid server member.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("⚠️ Usage: `!kick @user [reason]` or `/kick <user> [reason]`")
+    elif isinstance(error, commands.NoPrivateMessage):
+        await ctx.send("❌ This command can only be used in a server.")
+    else:
+        await ctx.send(f"⚠️ An error occurred: {error}")
+
+
+@bot.hybrid_command(name="ban", description="Bans a member from the server.")
+@commands.guild_only()
+@commands.has_permissions(ban_members=True)
+@commands.bot_has_permissions(ban_members=True)
+async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    if member == ctx.author:
+        await ctx.send("❌ You cannot ban yourself.")
+        return
+
+    if member == ctx.guild.me:
+        await ctx.send("❌ I cannot ban myself.")
+        return
+
+    if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        await ctx.send("❌ You cannot ban a member with an equal or higher role than yours.")
+        return
+
+    if member.top_role >= ctx.guild.me.top_role:
+        await ctx.send("❌ I cannot ban this member because their role is equal to or higher than my highest role.")
+        return
+
+    await member.ban(reason=reason)
+
+    embed = discord.Embed(
+        title="🔨 Member Banned",
+        description=f"**{member.mention}** has been banned from the server.",
+        color=discord.Color.red()
+    )
+    embed.add_field(name="Reason", value=reason, inline=False)
+    embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+    embed.set_footer(text=f"User ID: {member.id}")
+
+    await ctx.send(embed=embed)
+
+@ban.error
+async def ban_error(ctx: commands.Context, error: commands.CommandError):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("🚫 You do not have permission to ban members.")
+    elif isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("❌ I do not have permission to ban members.")
+    elif isinstance(error, commands.MemberNotFound):
+        await ctx.send("⚠️ Member not found. Please mention a valid server member.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("⚠️ Usage: `!ban @user [reason]` or `/ban <user> [reason]`")
+    elif isinstance(error, commands.NoPrivateMessage):
+        await ctx.send("❌ This command can only be used in a server.")
+    else:
+        await ctx.send(f"⚠️ An error occurred: {error}")
+
 
 # Owner-only command for instant manual re-syncing if needed
 @bot.command(name="sync")
