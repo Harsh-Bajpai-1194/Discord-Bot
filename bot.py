@@ -7,7 +7,7 @@ from threading import Thread
 
 load_dotenv()  # loads .env file
 
-# ── Keep-alive server (required for Render Web Service) ──────────────────────
+# ────────────────── Keep-alive server (required for Render Web Service) ──────────────────────
 app = Flask(__name__)
 
 @app.route('/')
