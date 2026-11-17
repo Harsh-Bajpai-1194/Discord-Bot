@@ -134,10 +134,13 @@ async def help(ctx: commands.Context):
 @commands.bot_has_permissions(kick_members=True, send_messages=True)
 async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
     if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
-        try:
-            await ctx.author.send("❌ I cannot perform moderation actions in channels where I cannot send messages.")
-        except discord.Forbidden:
-            pass
+        if ctx.interaction is not None:
+            await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
+        else:
+            try:
+                await ctx.author.send("❌ I cannot perform moderation actions in channels where I cannot send messages.")
+            except discord.Forbidden:
+                pass
         return
 
     if member == ctx.author:
@@ -198,10 +201,13 @@ async def kick_error(ctx: commands.Context, error: commands.CommandError):
 @commands.bot_has_permissions(ban_members=True, send_messages=True)
 async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
     if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
-        try:
-            await ctx.author.send("❌ I cannot perform moderation actions in channels where I cannot send messages.")
-        except discord.Forbidden:
-            pass
+        if ctx.interaction is not None:
+            await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
+        else:
+            try:
+                await ctx.author.send("❌ I cannot perform moderation actions in channels where I cannot send messages.")
+            except discord.Forbidden:
+                pass
         return
 
     if member == ctx.author:
