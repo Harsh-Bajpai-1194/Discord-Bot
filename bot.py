@@ -131,8 +131,15 @@ async def help(ctx: commands.Context):
 @bot.hybrid_command(name="kick", description="Kicks a member from the server.")
 @commands.guild_only()
 @commands.has_permissions(kick_members=True)
-@commands.bot_has_permissions(kick_members=True)
+@commands.bot_has_permissions(kick_members=True, send_messages=True)
 async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+        try:
+            await ctx.author.send("❌ I cannot perform moderation actions in channels where I cannot send messages.")
+        except discord.Forbidden:
+            pass
+        return
+
     if member == ctx.author:
         await ctx.send("❌ You cannot kick yourself.")
         return
@@ -149,6 +156,7 @@ async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "
         await ctx.send("❌ I cannot kick this member because their role is equal to or higher than my highest role.")
         return
 
+    await ctx.defer()
     await member.kick(reason=reason)
 
     embed = discord.Embed(
@@ -164,25 +172,38 @@ async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "
 
 @kick.error
 async def kick_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("🚫 You do not have permission to kick members.")
-    elif isinstance(error, commands.BotMissingPermissions):
-        await ctx.send("❌ I do not have permission to kick members.")
-    elif isinstance(error, commands.MemberNotFound):
-        await ctx.send("⚠️ Member not found. Please mention a valid server member.")
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("⚠️ Usage: `!kick @user [reason]` or `/kick <user> [reason]`")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.send("❌ This command can only be used in a server.")
-    else:
-        await ctx.send(f"⚠️ An error occurred: {error}")
+    try:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("🚫 You do not have permission to kick members.")
+        elif isinstance(error, commands.BotMissingPermissions):
+            await ctx.send("❌ I do not have permission to kick members and send messages in this channel.")
+        elif isinstance(error, commands.MemberNotFound):
+            await ctx.send("⚠️ Member not found. Please mention a valid server member.")
+        elif isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send("⚠️ Usage: `!kick @user [reason]` or `/kick <user> [reason]`")
+        elif isinstance(error, commands.NoPrivateMessage):
+            await ctx.send("❌ This command can only be used in a server.")
+        else:
+            await ctx.send(f"⚠️ An error occurred: {error}")
+    except discord.Forbidden:
+        try:
+            await ctx.author.send("❌ I could not respond in that channel due to missing Send Messages permission.")
+        except discord.Forbidden:
+            pass
 
 
 @bot.hybrid_command(name="ban", description="Bans a member from the server.")
 @commands.guild_only()
 @commands.has_permissions(ban_members=True)
-@commands.bot_has_permissions(ban_members=True)
+@commands.bot_has_permissions(ban_members=True, send_messages=True)
 async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+        try:
+            await ctx.author.send("❌ I cannot perform moderation actions in channels where I cannot send messages.")
+        except discord.Forbidden:
+            pass
+        return
+
     if member == ctx.author:
         await ctx.send("❌ You cannot ban yourself.")
         return
@@ -199,6 +220,7 @@ async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "N
         await ctx.send("❌ I cannot ban this member because their role is equal to or higher than my highest role.")
         return
 
+    await ctx.defer()
     await member.ban(reason=reason)
 
     embed = discord.Embed(
@@ -214,18 +236,24 @@ async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "N
 
 @ban.error
 async def ban_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("🚫 You do not have permission to ban members.")
-    elif isinstance(error, commands.BotMissingPermissions):
-        await ctx.send("❌ I do not have permission to ban members.")
-    elif isinstance(error, commands.MemberNotFound):
-        await ctx.send("⚠️ Member not found. Please mention a valid server member.")
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("⚠️ Usage: `!ban @user [reason]` or `/ban <user> [reason]`")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.send("❌ This command can only be used in a server.")
-    else:
-        await ctx.send(f"⚠️ An error occurred: {error}")
+    try:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("🚫 You do not have permission to ban members.")
+        elif isinstance(error, commands.BotMissingPermissions):
+            await ctx.send("❌ I do not have permission to ban members and send messages in this channel.")
+        elif isinstance(error, commands.MemberNotFound):
+            await ctx.send("⚠️ Member not found. Please mention a valid server member.")
+        elif isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send("⚠️ Usage: `!ban @user [reason]` or `/ban <user> [reason]`")
+        elif isinstance(error, commands.NoPrivateMessage):
+            await ctx.send("❌ This command can only be used in a server.")
+        else:
+            await ctx.send(f"⚠️ An error occurred: {error}")
+    except discord.Forbidden:
+        try:
+            await ctx.author.send("❌ I could not respond in that channel due to missing Send Messages permission.")
+        except discord.Forbidden:
+            pass
 
 
 # Owner-only command for instant manual re-syncing if needed
