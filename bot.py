@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import os
+import aiohttp
 from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
@@ -79,7 +80,7 @@ async def on_member_join(member):
             if member.guild.system_channel and channel != member.guild.system_channel:
                 await member.guild.system_channel.send(embed=embed)
 
-# ── Slash & Prefix Commands ────────────────────────────────────────────────
+# ── General Commands ───────────────────────────────────────────────────────
 @bot.hybrid_command(name="ping", description="Checks the bot's response time and API latency.")
 async def ping(ctx: commands.Context):
     await ctx.send(f"🏓 Pong! Latency: {round(bot.latency * 1000)}ms")
@@ -107,6 +108,21 @@ async def help(ctx: commands.Context):
         inline=False
     )
     embed.add_field(
+        name="`/joke` (or `!joke`)",
+        value="Tells a random family-friendly joke.",
+        inline=False
+    )
+    embed.add_field(
+        name="`/fact` (or `!fact`)",
+        value="Shares a random interesting fact.",
+        inline=False
+    )
+    embed.add_field(
+        name="`/weather <city>` (or `!weather`)",
+        value="Displays current weather for a specified city.",
+        inline=False
+    )
+    embed.add_field(
         name="`/help` (or `!help`)",
         value="Displays this interactive help message.",
         inline=False
@@ -115,6 +131,109 @@ async def help(ctx: commands.Context):
     embed.set_footer(text=f"Requested by {ctx.author.display_name}")
 
     await ctx.send(embed=embed)
+
+# ── Fun & Utility API Commands ─────────────────────────────────────────────
+@bot.hybrid_command(name="joke", description="Tells a random safe joke.")
+async def joke(ctx: commands.Context):
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get("https://v2.jokeapi.dev/joke/Any?safe-mode", timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                if resp.status != 200:
+                    await ctx.send("❌ Failed to fetch a joke from the API. Please try again later.")
+                    return
+                data = await resp.json()
+        except Exception:
+            await ctx.send("❌ Network error while fetching a joke.")
+            return
+
+    embed = discord.Embed(title="😂 Random Joke", color=discord.Color.gold())
+    if data.get("type") == "twopart":
+        embed.description = f"**{data.get('setup')}**\n\n*{data.get('delivery')}*"
+    else:
+        embed.description = data.get("joke", "No joke found.")
+    embed.set_footer(text=f"Category: {data.get('category', 'General')} | Requested by {ctx.author.display_name}")
+    await ctx.send(embed=embed)
+
+@bot.hybrid_command(name="fact", description="Shares a random interesting fact.")
+async def fact(ctx: commands.Context):
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get("https://uselessfacts.jsph.pl/api/v2/facts/random?language=en", timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                if resp.status != 200:
+                    await ctx.send("❌ Failed to fetch a fact from the API. Please try again later.")
+                    return
+                data = await resp.json()
+        except Exception:
+            await ctx.send("❌ Network error while fetching a fact.")
+            return
+
+    fact_text = data.get("text", "No fact available.")
+    embed = discord.Embed(
+        title="💡 Did You Know?",
+        description=fact_text,
+        color=discord.Color.teal()
+    )
+    embed.set_footer(text=f"Requested by {ctx.author.display_name}")
+    await ctx.send(embed=embed)
+
+@bot.hybrid_command(name="weather", description="Fetches current weather for a specified city.")
+async def weather(ctx: commands.Context, *, city: str):
+    api_key = os.getenv("OPENWEATHER_API_KEY")
+    async with aiohttp.ClientSession() as session:
+        try:
+            if api_key:
+                url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                    if resp.status == 404:
+                        await ctx.send(f"❌ City **{city}** not found.")
+                        return
+                    if resp.status != 200:
+                        await ctx.send("❌ Error fetching weather from OpenWeatherMap.")
+                        return
+                    data = await resp.json()
+                    temp_c = round(data["main"]["temp"])
+                    desc = data["weather"][0]["description"].title()
+                    humidity = data["main"]["humidity"]
+                    wind = f"{data['wind']['speed']} m/s"
+                    city_name = f"{data['name']}, {data['sys'].get('country', '')}"
+            else:
+                headers = {"User-Agent": "curl/7.68.0"}
+                url = f"https://wttr.in/{city}?format=j1"
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                    if resp.status != 200:
+                        await ctx.send(f"❌ Could not retrieve weather for **{city}**.")
+                        return
+                    data = await resp.json()
+                    current = data["current_condition"][0]
+                    temp_c = current["temp_C"]
+                    desc = current["weatherDesc"][0]["value"]
+                    humidity = current["humidity"]
+                    wind = f"{current['windspeedKmph']} km/h"
+                    area = data.get("nearest_area", [{}])[0]
+                    area_name = area.get("areaName", [{}])[0].get("value", city.title())
+                    country = area.get("country", [{}])[0].get("value", "")
+                    city_name = f"{area_name}, {country}" if country else area_name
+        except Exception:
+            await ctx.send("❌ Network error while fetching weather data.")
+            return
+
+    embed = discord.Embed(
+        title=f"🌤️ Weather for {city_name}",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Condition", value=desc, inline=True)
+    embed.add_field(name="Temperature", value=f"{temp_c}°C", inline=True)
+    embed.add_field(name="Humidity", value=f"{humidity}%", inline=True)
+    embed.add_field(name="Wind Speed", value=wind, inline=True)
+    embed.set_footer(text=f"Requested by {ctx.author.display_name}")
+    await ctx.send(embed=embed)
+
+@weather.error
+async def weather_error(ctx: commands.Context, error: commands.CommandError):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("⚠️ Usage: `!weather <city>` or `/weather <city>`")
+    else:
+        await ctx.send(f"⚠️ Error: {error}")
 
 # Owner-only command for instant manual re-syncing if needed
 @bot.command(name="sync")
