@@ -128,12 +128,23 @@ async def help(ctx: commands.Context):
 
 # ── Moderation Commands ───────────────────────────────────────────────────
 
+def check_channel_send_permissions(ctx: commands.Context) -> bool:
+    """
+    Checks if the bot has permission to send messages in the channel or thread.
+    Requires send_messages_in_threads in threads, and send_messages elsewhere.
+    """
+    perms = ctx.channel.permissions_for(ctx.guild.me)
+    if isinstance(ctx.channel, discord.Thread):
+        return getattr(perms, "send_messages_in_threads", perms.send_messages)
+    return perms.send_messages
+
+
 @bot.hybrid_command(name="kick", description="Kicks a member from the server.")
 @commands.guild_only()
 @commands.has_permissions(kick_members=True)
-@commands.bot_has_permissions(kick_members=True, send_messages=True)
+@commands.bot_has_permissions(kick_members=True)
 async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+    if not check_channel_send_permissions(ctx):
         if ctx.interaction is not None:
             await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
         else:
@@ -151,12 +162,17 @@ async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "
         await ctx.send("❌ I cannot kick myself.")
         return
 
-    if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+    author_is_owner = (ctx.author == ctx.guild.owner or getattr(ctx.guild, 'owner_id', None) == ctx.author.id)
+    if member.top_role >= ctx.author.top_role and not author_is_owner:
         await ctx.send("❌ You cannot kick a member with an equal or higher role than yours.")
         return
 
     if member.top_role >= ctx.guild.me.top_role:
         await ctx.send("❌ I cannot kick this member because their role is equal to or higher than my highest role.")
+        return
+
+    if len(reason) > 512:
+        await ctx.send("❌ Reason exceeds Discord's 512-character limit. Please shorten your reason.")
         return
 
     await ctx.defer()
@@ -171,7 +187,15 @@ async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "
     embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
     embed.set_footer(text=f"User ID: {member.id}")
 
-    await ctx.send(embed=embed)
+    try:
+        await ctx.send(embed=embed)
+    except discord.Forbidden:
+        try:
+            await ctx.author.send(
+                f"✅ Successfully kicked **{member}** (`{member.id}`), but I could not send the confirmation in {ctx.channel.mention}."
+            )
+        except discord.Forbidden:
+            pass
 
 @kick.error
 async def kick_error(ctx: commands.Context, error: commands.CommandError):
@@ -179,7 +203,7 @@ async def kick_error(ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("🚫 You do not have permission to kick members.")
         elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.send("❌ I do not have permission to kick members and send messages in this channel.")
+            await ctx.send("❌ I do not have permission to kick members.")
         elif isinstance(error, commands.MemberNotFound):
             await ctx.send("⚠️ Member not found. Please mention a valid server member.")
         elif isinstance(error, commands.MissingRequiredArgument):
@@ -198,9 +222,9 @@ async def kick_error(ctx: commands.Context, error: commands.CommandError):
 @bot.hybrid_command(name="ban", description="Bans a member from the server.")
 @commands.guild_only()
 @commands.has_permissions(ban_members=True)
-@commands.bot_has_permissions(ban_members=True, send_messages=True)
+@commands.bot_has_permissions(ban_members=True)
 async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+    if not check_channel_send_permissions(ctx):
         if ctx.interaction is not None:
             await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
         else:
@@ -218,7 +242,8 @@ async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "N
         await ctx.send("❌ I cannot ban myself.")
         return
 
-    if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+    author_is_owner = (ctx.author == ctx.guild.owner or getattr(ctx.guild, 'owner_id', None) == ctx.author.id)
+    if member.top_role >= ctx.author.top_role and not author_is_owner:
         await ctx.send("❌ You cannot ban a member with an equal or higher role than yours.")
         return
 
@@ -226,8 +251,15 @@ async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "N
         await ctx.send("❌ I cannot ban this member because their role is equal to or higher than my highest role.")
         return
 
+    if len(reason) > 512:
+        await ctx.send("❌ Reason exceeds Discord's 512-character limit. Please shorten your reason.")
+        return
+
     await ctx.defer()
-    await member.ban(reason=reason)
+    try:
+        await member.ban(reason=reason, delete_message_seconds=0)
+    except TypeError:
+        await member.ban(reason=reason, delete_message_days=0)
 
     embed = discord.Embed(
         title="🔨 Member Banned",
@@ -238,7 +270,15 @@ async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "N
     embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
     embed.set_footer(text=f"User ID: {member.id}")
 
-    await ctx.send(embed=embed)
+    try:
+        await ctx.send(embed=embed)
+    except discord.Forbidden:
+        try:
+            await ctx.author.send(
+                f"✅ Successfully banned **{member}** (`{member.id}`), but I could not send the confirmation in {ctx.channel.mention}."
+            )
+        except discord.Forbidden:
+            pass
 
 @ban.error
 async def ban_error(ctx: commands.Context, error: commands.CommandError):
@@ -246,7 +286,7 @@ async def ban_error(ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("🚫 You do not have permission to ban members.")
         elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.send("❌ I do not have permission to ban members and send messages in this channel.")
+            await ctx.send("❌ I do not have permission to ban members.")
         elif isinstance(error, commands.MemberNotFound):
             await ctx.send("⚠️ Member not found. Please mention a valid server member.")
         elif isinstance(error, commands.MissingRequiredArgument):
