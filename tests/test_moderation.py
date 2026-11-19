@@ -7,7 +7,29 @@ import bot
 
 
 def run_coro(coro):
-    return asyncio.run(coro)
+    """Executes a coroutine synchronously without requiring OS loopback sockets."""
+    while True:
+        try:
+            coro.send(None)
+        except StopIteration as e:
+            return e.value
+
+
+class MockRole:
+    def __init__(self, position):
+        self.position = position
+
+    def __ge__(self, other):
+        return self.position >= getattr(other, "position", 0)
+
+    def __gt__(self, other):
+        return self.position > getattr(other, "position", 0)
+
+    def __le__(self, other):
+        return self.position <= getattr(other, "position", 0)
+
+    def __lt__(self, other):
+        return self.position < getattr(other, "position", 0)
 
 
 def create_mock_member(id=12345, name="TestUser", position=5):
@@ -18,9 +40,7 @@ def create_mock_member(id=12345, name="TestUser", position=5):
     member.mention = f"<@{id}>"
     member.bot = False
 
-    role = MagicMock()
-    role.position = position
-    member.top_role = role
+    member.top_role = MockRole(position)
 
     member.kick = AsyncMock()
     member.ban = AsyncMock()
@@ -147,6 +167,7 @@ class TestModerationCommands(unittest.TestCase):
     def test_kick_owner_bypasses_author_role_check(self):
         ctx = create_mock_context()
         ctx.author = ctx.guild.owner
+        ctx.guild.me.top_role = MockRole(150)
         member = create_mock_member(position=100)
 
         run_coro(bot.kick.callback(ctx, member, reason="Owner kick"))
@@ -266,6 +287,15 @@ class TestModerationCommands(unittest.TestCase):
             "❌ You cannot ban a member with an equal or higher role than yours."
         )
         member.ban.assert_not_awaited()
+
+    def test_ban_owner_bypasses_author_role_check(self):
+        ctx = create_mock_context()
+        ctx.author = ctx.guild.owner
+        ctx.guild.me.top_role = MockRole(150)
+        member = create_mock_member(position=100)
+
+        run_coro(bot.ban.callback(ctx, member, reason="Owner ban"))
+        member.ban.assert_awaited_once_with(reason="Owner ban", delete_message_seconds=0)
 
     def test_ban_target_higher_than_bot_rejected(self):
         ctx = create_mock_context()

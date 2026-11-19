@@ -15,9 +15,17 @@ def home():
     return "Bot is alive!"
 
 def run_server():
-    app.run(host='0.0.0.0', port=8080)
+    try:
+        port = int(os.environ.get("PORT", 8080))
+        app.run(host='0.0.0.0', port=port)
+    except Exception as e:
+        print(f"Keep-alive server error: {e}")
 
-Thread(target=run_server, daemon=True).start()
+def keep_alive():
+    """Starts the Flask keep-alive server in a background daemon thread."""
+    thread = Thread(target=run_server, daemon=True)
+    thread.start()
+    return thread
 # ───────────────────────────────────────────────────────────────────────────
 
 intents = discord.Intents.default()
@@ -310,4 +318,5 @@ async def sync(ctx: commands.Context):
     await ctx.send(f"✅ Synced {len(synced)} command(s) to Discord.")
 
 if __name__ == "__main__":
+    keep_alive()
     bot.run(os.getenv("DISCORD_TOKEN"))
