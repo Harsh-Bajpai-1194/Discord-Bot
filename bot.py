@@ -144,6 +144,11 @@ async def help(ctx: commands.Context):
         value="Removes timeout from a member (Requires Moderate Members permission).",
         inline=False
     )
+    embed.add_field(
+        name="`/purge` (or `!purge`, `!clear`)",
+        value="Bulk deletes recent messages (1-100) (Requires Manage Messages permission).",
+        inline=False
+    )
 
     embed.set_footer(text=f"Requested by {ctx.author.display_name}")
 
@@ -188,12 +193,23 @@ def parse_duration(duration_str: str) -> timedelta:
     return timedelta(seconds=total_seconds)
 
 
+# ── Moderation Channel Permission Helper ──────────────────────────────────
+def check_channel_send_permissions(ctx: commands.Context) -> bool:
+    """Checks if the bot has permission to send messages in the current channel or thread."""
+    if not ctx.guild or not ctx.channel:
+        return False
+    perms = ctx.channel.permissions_for(ctx.guild.me)
+    if isinstance(ctx.channel, discord.Thread):
+        return getattr(perms, 'send_messages_in_threads', False)
+    return getattr(perms, 'send_messages', False)
+
+
 # ── Moderation Commands ───────────────────────────────────────────────────
 
-@bot.hybrid_command(name="purge", description="Bulk delete recent messages (1‑100).")
+@bot.hybrid_command(name="purge", aliases=["clear"], description="Bulk delete recent messages (1-100).")
 @commands.guild_only()
 @commands.has_permissions(manage_messages=True)
-@commands.bot_has_permissions(manage_messages=True, read_message_history=True, send_messages=True)
+@commands.bot_has_permissions(manage_messages=True, read_message_history=True, embed_links=True)
 async def purge(ctx: commands.Context, amount: int):
     """Delete a number of recent messages from the channel.
     Limits:
@@ -203,11 +219,23 @@ async def purge(ctx: commands.Context, amount: int):
     if amount < 1 or amount > 100:
         await ctx.send("❌ Amount must be between 1 and 100.", ephemeral=True)
         return
+
+    if not check_channel_send_permissions(ctx):
+        if ctx.interaction is not None:
+            await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
+        else:
+            try:
+                await ctx.author.send("❌ I cannot perform moderation actions in channels where I cannot send messages.")
+            except discord.Forbidden:
+                pass
+        return
+
+    await ctx.defer()
     try:
-        deleted = await ctx.channel.purge(limit=amount)
+        deleted = await ctx.channel.purge(limit=amount, bulk=True)
         embed = discord.Embed(
             title="🧹 Messages Purged",
-            description=f"Deleted {len(deleted)} message(s).",
+            description=f"Selected {len(deleted)} message(s) for deletion.",
             color=discord.Color.dark_gray()
         )
         msg = await ctx.send(embed=embed)
@@ -217,14 +245,14 @@ async def purge(ctx: commands.Context, amount: int):
     except discord.HTTPException as e:
         # Discord returns code 50034 for messages older than 14 days
         if getattr(e, "code", None) == 50034:
-            await ctx.send("⚠️ Cannot purge messages older than 14 days.", ephemeral=True)
+            await ctx.send("⚠️ Cannot purge messages older than 14 days. The purge may be incomplete; please check remaining message history before retrying.", ephemeral=True)
         else:
-            await ctx.send(f"❌ An error occurred: {e}", ephemeral=True)
+            await ctx.send(f"❌ An error occurred: {e}. The purge may be incomplete; please check remaining message history before retrying.", ephemeral=True)
 
 @bot.hybrid_command(name="iclear", description="Alias for /purge command.")
 @commands.guild_only()
 @commands.has_permissions(manage_messages=True)
-@commands.bot_has_permissions(manage_messages=True, read_message_history=True, send_messages=True)
+@commands.bot_has_permissions(manage_messages=True, read_message_history=True, embed_links=True)
 async def iclear(ctx: commands.Context, amount: int):
     await purge.callback(ctx, amount)
 
@@ -235,7 +263,9 @@ async def purge_error(ctx: commands.Context, error: commands.CommandError):
     elif isinstance(error, commands.BotMissingPermissions):
         await ctx.send("❌ I lack required permissions to purge messages.")
     elif isinstance(error, commands.BadArgument):
-        await ctx.send("⚠️ Invalid argument. Usage: `/purge <amount>` where amount is 1‑100.")
+        await ctx.send("⚠️ Invalid argument. Usage: `/purge <amount>` where amount is 1-100.")
+    elif isinstance(error, commands.NoPrivateMessage):
+        await ctx.send("❌ This command can only be used in a server.")
     else:
         await ctx.send(f"⚠️ An error occurred: {error}")
 
@@ -247,9 +277,9 @@ async def iclear_error(ctx: commands.Context, error: commands.CommandError):
 @bot.hybrid_command(name="kick", description="Kicks a member from the server.")
 @commands.guild_only()
 @commands.has_permissions(kick_members=True)
-@commands.bot_has_permissions(kick_members=True, send_messages=True)
+@commands.bot_has_permissions(kick_members=True)
 async def kick(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+    if not check_channel_send_permissions(ctx):
         if ctx.interaction is not None:
             await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
         else:
@@ -295,7 +325,7 @@ async def kick_error(ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("🚫 You do not have permission to kick members.")
         elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.send("❌ I do not have permission to kick members and send messages in this channel.")
+            await ctx.send("❌ I do not have permission to kick members.")
         elif isinstance(error, commands.MemberNotFound):
             await ctx.send("⚠️ Member not found. Please mention a valid server member.")
         elif isinstance(error, commands.MissingRequiredArgument):
@@ -314,9 +344,9 @@ async def kick_error(ctx: commands.Context, error: commands.CommandError):
 @bot.hybrid_command(name="ban", description="Bans a member from the server.")
 @commands.guild_only()
 @commands.has_permissions(ban_members=True)
-@commands.bot_has_permissions(ban_members=True, send_messages=True)
+@commands.bot_has_permissions(ban_members=True)
 async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+    if not check_channel_send_permissions(ctx):
         if ctx.interaction is not None:
             await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
         else:
@@ -343,7 +373,10 @@ async def ban(ctx: commands.Context, member: discord.Member, *, reason: str = "N
         return
 
     await ctx.defer()
-    await member.ban(reason=reason)
+    try:
+        await member.ban(reason=reason, delete_message_seconds=0)
+    except TypeError:
+        await member.ban(reason=reason, delete_message_days=0)
 
     embed = discord.Embed(
         title="🔨 Member Banned",
@@ -362,7 +395,7 @@ async def ban_error(ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("🚫 You do not have permission to ban members.")
         elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.send("❌ I do not have permission to ban members and send messages in this channel.")
+            await ctx.send("❌ I do not have permission to ban members.")
         elif isinstance(error, commands.MemberNotFound):
             await ctx.send("⚠️ Member not found. Please mention a valid server member.")
         elif isinstance(error, commands.MissingRequiredArgument):
@@ -381,9 +414,9 @@ async def ban_error(ctx: commands.Context, error: commands.CommandError):
 @bot.hybrid_command(name="timeout", description="Times out a member in the server.")
 @commands.guild_only()
 @commands.has_permissions(moderate_members=True)
-@commands.bot_has_permissions(moderate_members=True, send_messages=True)
+@commands.bot_has_permissions(moderate_members=True)
 async def timeout(ctx: commands.Context, member: discord.Member, duration: str = "10m", *, reason: str = "No reason provided"):
-    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+    if not check_channel_send_permissions(ctx):
         if ctx.interaction is not None:
             await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
         else:
@@ -417,12 +450,12 @@ async def timeout(ctx: commands.Context, member: discord.Member, duration: str =
     try:
         delta = parse_duration(duration)
     except (ValueError, commands.BadArgument) as e:
-        await ctx.send(f"⚠️ {e}")
+        await ctx.send(f"⚠️ {e}", allowed_mentions=discord.AllowedMentions.none())
         return
 
     await ctx.defer()
     until = discord.utils.utcnow() + delta
-    await member.timeout(until=until, reason=reason)
+    await member.timeout(until, reason=reason)
 
     embed = discord.Embed(
         title="⏳ Member Timed Out",
@@ -444,13 +477,13 @@ async def timeout_error(ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("🚫 You do not have permission to timeout members.")
         elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.send("❌ I do not have permission to timeout members and send messages in this channel.")
+            await ctx.send("❌ I do not have permission to timeout members.")
         elif isinstance(error, commands.MemberNotFound):
             await ctx.send("⚠️ Member not found. Please mention a valid server member.")
         elif isinstance(error, commands.MissingRequiredArgument):
             await ctx.send("⚠️ Usage: `!timeout @user [duration] [reason]` or `/timeout <user> [duration] [reason]`")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send(f"⚠️ {error}")
+            await ctx.send(f"⚠️ {error}", allowed_mentions=discord.AllowedMentions.none())
         elif isinstance(error, commands.NoPrivateMessage):
             await ctx.send("❌ This command can only be used in a server.")
         else:
@@ -465,9 +498,9 @@ async def timeout_error(ctx: commands.Context, error: commands.CommandError):
 @bot.hybrid_command(name="untimeout", description="Removes timeout from a member in the server.")
 @commands.guild_only()
 @commands.has_permissions(moderate_members=True)
-@commands.bot_has_permissions(moderate_members=True, send_messages=True)
+@commands.bot_has_permissions(moderate_members=True)
 async def untimeout(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-    if not ctx.channel.permissions_for(ctx.guild.me).send_messages:
+    if not check_channel_send_permissions(ctx):
         if ctx.interaction is not None:
             await ctx.send("❌ I cannot perform moderation actions in channels where I cannot send messages.", ephemeral=True)
         else:
@@ -499,7 +532,7 @@ async def untimeout(ctx: commands.Context, member: discord.Member, *, reason: st
         return
 
     await ctx.defer()
-    await member.timeout(until=None, reason=reason)
+    await member.timeout(None, reason=reason)
 
     embed = discord.Embed(
         title="🔊 Member Timeout Removed",
@@ -520,7 +553,7 @@ async def untimeout_error(ctx: commands.Context, error: commands.CommandError):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("🚫 You do not have permission to remove timeouts.")
         elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.send("❌ I do not have permission to timeout members and send messages in this channel.")
+            await ctx.send("❌ I do not have permission to timeout members.")
         elif isinstance(error, commands.MemberNotFound):
             await ctx.send("⚠️ Member not found. Please mention a valid server member.")
         elif isinstance(error, commands.MissingRequiredArgument):
