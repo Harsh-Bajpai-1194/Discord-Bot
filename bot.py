@@ -49,7 +49,7 @@ bot = AstragonBot()
 
 # ── Gemini AI Configuration & Helpers ─────────────────────────────────────
 AI_CHANNEL_NAME = os.getenv("AI_CHANNEL_NAME", "ai-chat").lower()
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_HISTORY_LIMIT = int(os.getenv("GEMINI_HISTORY_LIMIT", "10"))
 
 _cached_model = None
@@ -88,22 +88,24 @@ def split_message(text: str, max_length: int = 2000) -> list[str]:
         # Prefer splitting at paragraph breaks, then line breaks, then spaces
         split_idx = remaining.rfind("\n\n", 0, max_length)
         if split_idx != -1:
-            split_idx += 2  # include the double newline in the first chunk
+            chunk = remaining[:split_idx]
+            remaining = remaining[split_idx + 2:]
         else:
             split_idx = remaining.rfind("\n", 0, max_length)
             if split_idx != -1:
-                split_idx += 1
+                chunk = remaining[:split_idx]
+                remaining = remaining[split_idx + 1:]
             else:
                 split_idx = remaining.rfind(" ", 0, max_length)
                 if split_idx != -1:
-                    split_idx += 1
+                    chunk = remaining[:split_idx]
+                    remaining = remaining[split_idx + 1:]
                 else:
-                    split_idx = max_length
+                    chunk = remaining[:max_length]
+                    remaining = remaining[max_length:]
 
-        chunk = remaining[:split_idx].rstrip()
         if chunk:
             chunks.append(chunk)
-        remaining = remaining[split_idx:].lstrip()
 
     if remaining:
         chunks.append(remaining)
@@ -111,17 +113,18 @@ def split_message(text: str, max_length: int = 2000) -> list[str]:
     return chunks
 
 
-async def build_gemini_history(channel, current_message, limit: int = 10) -> list[dict]:
+async def build_gemini_history(channel, current_message, limit: int = 10) -> tuple[list[dict], str]:
     """
     Fetches recent messages from the channel and structures them for Gemini ChatSession history.
-    Ensures turns strictly alternate and begin with 'user' and end with 'model'.
+    Ensures turns in history strictly alternate and begin with 'user' and end with 'model'.
+    Preserves any trailing unanswered user text so it can be combined into the next prompt.
     """
     try:
         raw_messages = [msg async for msg in channel.history(limit=limit, before=current_message)]
         raw_messages.reverse()  # Chronological order (oldest first)
     except Exception as e:
         print(f"⚠️ Could not fetch channel history: {e}")
-        return []
+        return [], ""
 
     history = []
     for msg in raw_messages:
@@ -154,11 +157,17 @@ async def build_gemini_history(channel, current_message, limit: int = 10) -> lis
     while history and history[0]["role"] != "user":
         history.pop(0)
 
-    # Gemini requires history to end with 'model' so the new user message continues the turn
+    # Gemini requires history to end with 'model' so the new user message continues the turn.
+    # Preserve any trailing unanswered user messages to be merged into the current prompt.
+    trailing_parts = []
     while history and history[-1]["role"] != "model":
-        history.pop(-1)
+        trailing_turn = history.pop(-1)
+        if trailing_turn["role"] == "user":
+            trailing_parts.extend(trailing_turn["parts"])
 
-    return history
+    trailing_user_text = "\n".join(reversed(trailing_parts)) if trailing_parts else ""
+
+    return history, trailing_user_text
 
 
 async def handle_ai_chat(message: discord.Message):
@@ -177,15 +186,16 @@ async def handle_ai_chat(message: discord.Message):
         )
         return
 
-    async with message.channel.typing():
-        try:
-            history = await build_gemini_history(
+    try:
+        async with message.channel.typing():
+            history, trailing_user_text = await build_gemini_history(
                 message.channel,
                 message,
                 limit=GEMINI_HISTORY_LIMIT
             )
             chat = model.start_chat(history=history)
-            prompt = f"{message.author.display_name}: {message.clean_content}"
+            current_text = f"{message.author.display_name}: {message.clean_content}"
+            prompt = f"{trailing_user_text}\n{current_text}" if trailing_user_text else current_text
             response = await chat.send_message_async(prompt)
 
             response_text = getattr(response, "text", "")
@@ -195,14 +205,14 @@ async def handle_ai_chat(message: discord.Message):
             chunks = split_message(response_text)
             for idx, chunk in enumerate(chunks):
                 if idx == 0:
-                    await message.reply(chunk)
+                    await message.reply(chunk, allowed_mentions=discord.AllowedMentions.none())
                 else:
-                    await message.channel.send(chunk)
-        except Exception as e:
-            print(f"❌ Gemini AI error: {e}")
-            await message.reply(
-                "⚠️ Sorry, I encountered an error while communicating with Gemini. Please try again later."
-            )
+                    await message.channel.send(chunk, allowed_mentions=discord.AllowedMentions.none())
+    except Exception as e:
+        print(f"❌ Gemini AI error: {e}")
+        await message.reply(
+            "⚠️ Sorry, I encountered an error while communicating with Gemini. Please try again later."
+        )
 
 
 # ── Discord Events ─────────────────────────────────────────────────────────

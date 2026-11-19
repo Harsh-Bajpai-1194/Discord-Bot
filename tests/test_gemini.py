@@ -49,6 +49,14 @@ class TestGeminiAI(unittest.TestCase):
         for chunk in chunks:
             self.assertEqual(len(chunk), 500)
 
+    def test_split_message_preserves_indentation(self):
+        padding = "# padding\n" * 199
+        code = "if True:\n    print('ok')\n"
+        combined = padding + code
+        chunks = bot.split_message(combined, max_length=2000)
+        self.assertTrue(len(chunks) >= 2)
+        self.assertTrue(any(chunk.startswith("    print('ok')") for chunk in chunks))
+
     # ── Test build_gemini_history ───────────────────────────────────────────
     def test_build_gemini_history_basic(self):
         """Verifies chronological formatting of user and model turns."""
@@ -66,12 +74,13 @@ class TestGeminiAI(unittest.TestCase):
 
         channel.history = mock_history
 
-        history = run_coro(bot.build_gemini_history(channel, current_msg, limit=10))
+        history, trailing = run_coro(bot.build_gemini_history(channel, current_msg, limit=10))
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0]["role"], "user")
         self.assertIn("Alice: Hello", history[0]["parts"][0])
         self.assertEqual(history[1]["role"], "model")
         self.assertEqual(history[1]["parts"][0], "Hello Alice! How can I help?")
+        self.assertEqual(trailing, "")
 
     def test_build_gemini_history_skips_commands_and_bots(self):
         """Verifies prefix commands and messages from other bots are filtered out."""
@@ -90,11 +99,12 @@ class TestGeminiAI(unittest.TestCase):
 
         channel.history = mock_history
 
-        history = run_coro(bot.build_gemini_history(channel, current_msg, limit=10))
+        history, trailing = run_coro(bot.build_gemini_history(channel, current_msg, limit=10))
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0]["role"], "user")
         self.assertIn("Bob: Valid user question", history[0]["parts"][0])
         self.assertEqual(history[1]["role"], "model")
+        self.assertEqual(trailing, "")
 
     def test_build_gemini_history_merges_consecutive_same_role(self):
         """Verifies consecutive turns by same role are merged to obey Gemini turn alternation."""
@@ -112,15 +122,16 @@ class TestGeminiAI(unittest.TestCase):
 
         channel.history = mock_history
 
-        history = run_coro(bot.build_gemini_history(channel, current_msg, limit=10))
+        history, trailing = run_coro(bot.build_gemini_history(channel, current_msg, limit=10))
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0]["role"], "user")
         self.assertIn("First question", history[0]["parts"][0])
         self.assertIn("Second question", history[0]["parts"][0])
         self.assertEqual(history[1]["role"], "model")
+        self.assertEqual(trailing, "")
 
     def test_build_gemini_history_ensures_user_start_and_model_end(self):
-        """Verifies history leading with model or trailing with user is trimmed safely."""
+        """Verifies history leading with model is trimmed and trailing unanswered user is preserved."""
         channel = MagicMock(spec=discord.TextChannel)
         current_msg = create_mock_message(content="Current message", author_name="Charlie")
 
@@ -139,12 +150,11 @@ class TestGeminiAI(unittest.TestCase):
 
         channel.history = mock_history
 
-        history = run_coro(bot.build_gemini_history(channel, current_msg, limit=10))
-        # After merging and trimming: orphan_model dropped (starts with user),
-        # trailing_user dropped (must end with model before current message continues turn)
+        history, trailing = run_coro(bot.build_gemini_history(channel, current_msg, limit=10))
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0]["role"], "user")
         self.assertEqual(history[-1]["role"], "model")
+        self.assertIn("Charlie: Unanswered user message", trailing)
 
     def test_build_gemini_history_handles_exception(self):
         """Verifies history building returns empty list if channel history fails."""
@@ -152,8 +162,9 @@ class TestGeminiAI(unittest.TestCase):
         current_msg = create_mock_message()
         channel.history.side_effect = Exception("Channel access forbidden")
 
-        history = run_coro(bot.build_gemini_history(channel, current_msg))
+        history, trailing = run_coro(bot.build_gemini_history(channel, current_msg))
         self.assertEqual(history, [])
+        self.assertEqual(trailing, "")
 
     # ── Test handle_ai_chat ─────────────────────────────────────────────────
     @patch.dict("os.environ", {}, clear=True)
@@ -183,12 +194,16 @@ class TestGeminiAI(unittest.TestCase):
 
         mock_model.start_chat.assert_called_once()
         mock_chat.send_message_async.assert_awaited_once()
-        msg.reply.assert_awaited_once_with("Hello! I am Gemini AI.")
+        msg.reply.assert_awaited_once()
+        args, kwargs = msg.reply.call_args
+        self.assertEqual(args[0], "Hello! I am Gemini AI.")
+        self.assertFalse(kwargs["allowed_mentions"].everyone)
+        self.assertFalse(kwargs["allowed_mentions"].users)
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": "fake_key"})
     @patch("bot.get_ai_model")
     def test_handle_ai_chat_multichunk_response(self, mock_get_model):
-        """Verifies messages longer than 2000 characters are sent in multiple chunks."""
+        """Verifies messages longer than 2000 characters are sent in multiple chunks with mentions disabled."""
         mock_model = MagicMock()
         mock_chat = MagicMock()
         mock_response = MagicMock()
@@ -206,6 +221,37 @@ class TestGeminiAI(unittest.TestCase):
         msg.channel.send.assert_awaited()
         total_chunks = 1 + msg.channel.send.await_count
         self.assertTrue(total_chunks >= 2)
+
+        reply_kwargs = msg.reply.call_args[1]
+        self.assertIsNotNone(reply_kwargs.get("allowed_mentions"))
+        send_kwargs = msg.channel.send.call_args[1]
+        self.assertIsNotNone(send_kwargs.get("allowed_mentions"))
+
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "fake_key"})
+    @patch("bot.get_ai_model")
+    def test_handle_ai_chat_preserves_unanswered_user_messages(self, mock_get_model):
+        """Verifies trailing unanswered user messages are appended to the outgoing prompt."""
+        mock_model = MagicMock()
+        mock_chat = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "Your project is Orion."
+        mock_chat.send_message_async = AsyncMock(return_value=mock_response)
+        mock_model.start_chat.return_value = mock_chat
+        mock_get_model.return_value = mock_model
+
+        msg = create_mock_message(content="What is my project named?", author_name="Alice", channel_name="ai-chat")
+        trailing_msg = create_mock_message(content="My project is named Orion", author_name="Alice", channel_name="ai-chat")
+
+        async def mock_history(limit, before):
+            yield trailing_msg
+
+        msg.channel.history = mock_history
+
+        run_coro(bot.handle_ai_chat(msg))
+
+        sent_prompt = mock_chat.send_message_async.call_args[0][0]
+        self.assertIn("Alice: My project is named Orion", sent_prompt)
+        self.assertIn("Alice: What is my project named?", sent_prompt)
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": "fake_key"})
     @patch("bot.get_ai_model")
@@ -225,7 +271,24 @@ class TestGeminiAI(unittest.TestCase):
         args = msg.reply.call_args[0][0]
         self.assertIn("Sorry, I encountered an error while communicating with Gemini", args)
 
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "fake_key"})
+    @patch("bot.get_ai_model")
+    def test_handle_ai_chat_typing_failure(self, mock_get_model):
+        """Verifies failure in channel.typing() sends a friendly error message."""
+        mock_model = MagicMock()
+        mock_get_model.return_value = mock_model
+
+        msg = create_mock_message(content="Hello", channel_name="ai-chat")
+        msg.channel.typing.side_effect = Exception("HTTP 500 error on typing")
+
+        run_coro(bot.handle_ai_chat(msg))
+
+        msg.reply.assert_awaited_once()
+        args = msg.reply.call_args[0][0]
+        self.assertIn("Sorry, I encountered an error while communicating with Gemini", args)
+
     # ── Test on_message routing and isolation ────────────────────────────────
+    @patch("bot.AI_CHANNEL_NAME", "ai-chat")
     @patch("bot.handle_ai_chat", new_callable=AsyncMock)
     def test_on_message_triggers_ai_chat_in_ai_channel(self, mock_handle_ai):
         """Verifies messages in #ai-chat trigger handle_ai_chat."""
@@ -236,6 +299,7 @@ class TestGeminiAI(unittest.TestCase):
             mock_handle_ai.assert_awaited_once_with(msg)
             mock_process.assert_not_awaited()
 
+    @patch("bot.AI_CHANNEL_NAME", "ai-chat")
     @patch("bot.handle_ai_chat", new_callable=AsyncMock)
     def test_on_message_ignores_other_channels_for_ai(self, mock_handle_ai):
         """Verifies messages in #general or other channels NEVER trigger handle_ai_chat."""
@@ -246,6 +310,7 @@ class TestGeminiAI(unittest.TestCase):
             mock_handle_ai.assert_not_awaited()
             mock_process.assert_awaited_once_with(msg)
 
+    @patch("bot.AI_CHANNEL_NAME", "ai-chat")
     @patch("bot.handle_ai_chat", new_callable=AsyncMock)
     def test_on_message_ai_channel_allows_prefix_commands(self, mock_handle_ai):
         """Verifies !commands in #ai-chat route to command processor, not handle_ai_chat."""
@@ -256,6 +321,7 @@ class TestGeminiAI(unittest.TestCase):
             mock_handle_ai.assert_not_awaited()
             mock_process.assert_awaited_once_with(msg)
 
+    @patch("bot.AI_CHANNEL_NAME", "ai-chat")
     @patch("bot.handle_ai_chat", new_callable=AsyncMock)
     def test_on_message_ignores_other_bots_in_ai_channel(self, mock_handle_ai):
         """Verifies messages from other bots in #ai-chat are ignored."""

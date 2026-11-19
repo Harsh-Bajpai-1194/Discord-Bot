@@ -71,6 +71,7 @@ class TestAstragonBotGeneral(unittest.TestCase):
             run_coro(bot.on_message(message))
             mock_process.assert_not_awaited()
 
+    @patch("bot.AI_CHANNEL_NAME", "ai-chat")
     def test_on_message_greets_friendly_text_in_general_channel(self):
         """Verify on_message replies to greetings in non-AI channels and processes commands."""
         message = MagicMock()
@@ -86,6 +87,7 @@ class TestAstragonBotGeneral(unittest.TestCase):
             message.reply.assert_awaited_once_with("Hey <@999>! 👋 How's it going?")
             mock_process.assert_awaited_once_with(message)
 
+    @patch("bot.AI_CHANNEL_NAME", "ai-chat")
     def test_on_message_prefix_command_skips_greeting(self):
         """Verify messages starting with ! are not greeted as plain text."""
         message = MagicMock()
