@@ -11,9 +11,9 @@ A 24×7 multi-purpose Discord bot built with Python (`discord.py`) and hosted on
 3. Create a `.env` file with your configuration:
    ```env
    DISCORD_TOKEN=your_bot_token_here
-   OPENWEATHER_API_KEY=your_openweather_api_key_optional
+   OPENWEATHER_API_KEY=
    ```
-   *(Note: `OPENWEATHER_API_KEY` is optional; if omitted, `/weather` automatically falls back to `wttr.in`).*
+   *(Note: `OPENWEATHER_API_KEY` is optional; if left empty or omitted, `/weather` automatically falls back to `wttr.in`).*
 
 4. **Important Intents & Permissions:**
    In the [Discord Developer Portal](https://discord.com/developers/applications):

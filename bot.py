@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import os
 import aiohttp
+import urllib.parse
 from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
@@ -16,9 +17,17 @@ def home():
     return "Bot is alive!"
 
 def run_server():
-    app.run(host='0.0.0.0', port=8080)
+    try:
+        port = int(os.environ.get("PORT", 8080))
+        app.run(host='0.0.0.0', port=port)
+    except Exception as e:
+        print(f"Keep-alive server error: {e}")
 
-Thread(target=run_server, daemon=True).start()
+def keep_alive():
+    """Starts the Flask keep-alive server in a background daemon thread."""
+    thread = Thread(target=run_server, daemon=True)
+    thread.start()
+    return thread
 # ───────────────────────────────────────────────────────────────────────────
 
 intents = discord.Intents.default()
@@ -135,6 +144,7 @@ async def help(ctx: commands.Context):
 # ── Fun & Utility API Commands ─────────────────────────────────────────────
 @bot.hybrid_command(name="joke", description="Tells a random safe joke.")
 async def joke(ctx: commands.Context):
+    await ctx.defer()
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get("https://v2.jokeapi.dev/joke/Any?safe-mode", timeout=aiohttp.ClientTimeout(total=8)) as resp:
@@ -146,9 +156,15 @@ async def joke(ctx: commands.Context):
             await ctx.send("❌ Network error while fetching a joke.")
             return
 
+    if not isinstance(data, dict) or data.get("error"):
+        await ctx.send("❌ Failed to fetch a joke from the API. Please try again later.")
+        return
+
     embed = discord.Embed(title="😂 Random Joke", color=discord.Color.gold())
     if data.get("type") == "twopart":
-        embed.description = f"**{data.get('setup')}**\n\n*{data.get('delivery')}*"
+        setup = data.get("setup", "")
+        delivery = data.get("delivery", "")
+        embed.description = f"**{setup}**\n\n*{delivery}*"
     else:
         embed.description = data.get("joke", "No joke found.")
     embed.set_footer(text=f"Category: {data.get('category', 'General')} | Requested by {ctx.author.display_name}")
@@ -156,6 +172,7 @@ async def joke(ctx: commands.Context):
 
 @bot.hybrid_command(name="fact", description="Shares a random interesting fact.")
 async def fact(ctx: commands.Context):
+    await ctx.defer()
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get("https://uselessfacts.jsph.pl/api/v2/facts/random?language=en", timeout=aiohttp.ClientTimeout(total=8)) as resp:
@@ -166,6 +183,10 @@ async def fact(ctx: commands.Context):
         except Exception:
             await ctx.send("❌ Network error while fetching a fact.")
             return
+
+    if not isinstance(data, dict):
+        await ctx.send("❌ Failed to fetch a fact from the API. Please try again later.")
+        return
 
     fact_text = data.get("text", "No fact available.")
     embed = discord.Embed(
@@ -178,12 +199,18 @@ async def fact(ctx: commands.Context):
 
 @bot.hybrid_command(name="weather", description="Fetches current weather for a specified city.")
 async def weather(ctx: commands.Context, *, city: str):
+    await ctx.defer()
     api_key = os.getenv("OPENWEATHER_API_KEY")
     async with aiohttp.ClientSession() as session:
         try:
             if api_key:
-                url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                url = "https://api.openweathermap.org/data/2.5/weather"
+                params = {
+                    "q": city,
+                    "appid": api_key,
+                    "units": "metric"
+                }
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                     if resp.status == 404:
                         await ctx.send(f"❌ City **{city}** not found.")
                         return
@@ -191,28 +218,49 @@ async def weather(ctx: commands.Context, *, city: str):
                         await ctx.send("❌ Error fetching weather from OpenWeatherMap.")
                         return
                     data = await resp.json()
+                if not isinstance(data, dict):
+                    await ctx.send("❌ Error fetching weather from OpenWeatherMap.")
+                    return
+                try:
                     temp_c = round(data["main"]["temp"])
                     desc = data["weather"][0]["description"].title()
                     humidity = data["main"]["humidity"]
                     wind = f"{data['wind']['speed']} m/s"
-                    city_name = f"{data['name']}, {data['sys'].get('country', '')}"
+                    country = data.get("sys", {}).get("country", "") if isinstance(data.get("sys"), dict) else ""
+                    name = data.get("name", city.title())
+                    city_name = f"{name}, {country}" if country else name
+                except (KeyError, IndexError, TypeError, ValueError):
+                    await ctx.send("❌ Error fetching weather from OpenWeatherMap.")
+                    return
             else:
+                encoded_city = urllib.parse.quote(city, safe="")
+                url = f"https://wttr.in/{encoded_city}"
+                params = {"format": "j1"}
                 headers = {"User-Agent": "curl/7.68.0"}
-                url = f"https://wttr.in/{city}?format=j1"
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                async with session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                     if resp.status != 200:
                         await ctx.send(f"❌ Could not retrieve weather for **{city}**.")
                         return
                     data = await resp.json()
+                if not isinstance(data, dict):
+                    await ctx.send(f"❌ Could not retrieve weather for **{city}**.")
+                    return
+                try:
                     current = data["current_condition"][0]
                     temp_c = current["temp_C"]
                     desc = current["weatherDesc"][0]["value"]
                     humidity = current["humidity"]
                     wind = f"{current['windspeedKmph']} km/h"
-                    area = data.get("nearest_area", [{}])[0]
-                    area_name = area.get("areaName", [{}])[0].get("value", city.title())
-                    country = area.get("country", [{}])[0].get("value", "")
+                    nearest = data.get("nearest_area", [{}])
+                    area = nearest[0] if isinstance(nearest, list) and nearest and isinstance(nearest[0], dict) else {}
+                    area_names = area.get("areaName", [{}])
+                    area_name = area_names[0].get("value", city.title()) if isinstance(area_names, list) and area_names and isinstance(area_names[0], dict) else city.title()
+                    countries = area.get("country", [{}])
+                    country = countries[0].get("value", "") if isinstance(countries, list) and countries and isinstance(countries[0], dict) else ""
                     city_name = f"{area_name}, {country}" if country else area_name
+                except (KeyError, IndexError, TypeError):
+                    await ctx.send(f"❌ Could not retrieve weather for **{city}**.")
+                    return
         except Exception:
             await ctx.send("❌ Network error while fetching weather data.")
             return
@@ -243,4 +291,5 @@ async def sync(ctx: commands.Context):
     await ctx.send(f"✅ Synced {len(synced)} command(s) to Discord.")
 
 if __name__ == "__main__":
+    keep_alive()
     bot.run(os.getenv("DISCORD_TOKEN"))
